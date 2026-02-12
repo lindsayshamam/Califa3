@@ -1,0 +1,194 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Garden Pro: Playground & Chill Audit</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/suncalc@1.9.0/suncalc.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: -apple-system, sans-serif; background: #050505; color: white; }
+        #ui { position: absolute; bottom: 10px; left: 2%; width: 96%; background: rgba(255,255,255,0.95); padding: 8px; border-radius: 15px; z-index: 100; color: #333; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box;}
+        #inspector { position: absolute; top: 10px; left: 2%; width: 96%; background: rgba(0,0,0,0.85); padding: 12px; border-radius: 12px; font-size: 12px; border: 1px solid #ffcc00; box-sizing: border-box;}
+        select { width: 100%; padding: 8px; border-radius: 5px; font-size: 13px; margin-bottom: 5px; }
+        input[type=range] { width: 100%; height: 14px; accent-color: #d32f2f; }
+        .label-row { display: flex; justify-content: space-between; font-size: 9px; color: #555; font-weight: bold; }
+        .playground-label { color: #ff5722; font-weight: bold; font-size: 11px; }
+    </style>
+</head>
+<body>
+    <div id="inspector">
+        <b id="spot-coords">Sun & Playground Audit</b>
+        <select id="plantSelect" onchange="autoHighlight()">
+            <optgroup label="Permanent Trees">
+                <option value="8">Citrus & Avocado (High Sun)</option>
+                <option value="7">Apples & Peaches (Need Chill)</option>
+            </optgroup>
+            <optgroup label="Garden Staples">
+                <option value="8">Tomatoes / Peppers</option>
+                <option value="5">Herbs / Jasmine</option>
+            </optgroup>
+        </select>
+        <div id="result">Tap square to analyze shadow impact.</div>
+        <div class="playground-label">🏗️ Playground Shadow factored into analysis.</div>
+    </div>
+
+    <div id="ui">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span id="sun-info" style="font-size:10px; font-weight:bold;">Awaiting GPS...</span>
+            <button onclick="toggleView()" style="width:auto; padding:4px 10px; background:#2e7d32; color:white; border:none; border-radius:5px;">🔄 View</button>
+        </div>
+        <input type="range" id="timeSlider" min="0" max="1439" value="720">
+        <input type="range" id="daySlider" min="0" max="364" value="172">
+        <div class="label-row"><span>WINTER</span><span>SUMMER</span></div>
+    </div>
+
+    <script>
+        let isBirdsEye = false;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x112211 });
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(52, 36), groundMat);
+        ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
+        scene.add(ground);
+
+        scene.add(new THREE.GridHelper(52, 26, 0x444444, 0x222222));
+        
+        const highlighters = [];
+        for(let i=0; i<6; i++) {
+            const color = i < 3 ? 0xffcc00 : 0x00f2ff;
+            const h = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.MeshBasicMaterial({color: color, transparent:true, opacity:0.6}));
+            h.rotation.x = -Math.PI/2; h.position.y = 0.15; h.visible = false;
+            scene.add(h); highlighters.push(h);
+        }
+
+        const selector = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.5}));
+        selector.rotation.x = -Math.PI / 2; selector.position.y = 0.1; scene.add(selector);
+
+        function addObj(w,h,d,x,y,z,c=0xeeeeee, op=1.0) {
+            const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color:c, transparent: op < 1, opacity: op}));
+            m.position.set(x,y,z); m.castShadow = true; m.receiveShadow = true; scene.add(m);
+            return m;
+        }
+
+        // STRUCTURES
+        addObj(52, 12, 10, 0, 6, -23, 0x4a90e2); // North House
+        addObj(52, 8, 0.5, 0, 4, 18, 0xffffff);  // South Wall
+        
+        // PLAYGROUND: Starts -22w, -8s. Size 8'E (width) x 10'S (depth). 
+        // Position is center of object: x = -22 + (8/2) = -18. z = -8 + (10/2) = -3.
+        const playground = addObj(8, 10, 10, -18, 5, -3, 0x8d6e63); 
+
+        function addTree(h,r,x,z,c=0x1b5e20) {
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, h/2), new THREE.MeshStandardMaterial({color:0x3e2723}));
+            trunk.position.set(x, h/4, z); trunk.castShadow = true; scene.add(trunk);
+            const foliage = new THREE.Mesh(new THREE.SphereGeometry(r), new THREE.MeshStandardMaterial({color:c, transparent:true, opacity:0.8}));
+            foliage.position.set(x, h*0.8, z); foliage.castShadow = true; scene.add(foliage);
+        }
+        addTree(26, 9, -28, 18); // Neighbor SW
+        addTree(12, 4, 21, 13);  // Corner SE
+        addTree(6, 3, 6, 6, 0x556b2f); // Oak 6W, 6S
+
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        sunLight.castShadow = true;
+        sunLight.shadow.camera.left = -40; sunLight.shadow.camera.right = 40;
+        sunLight.shadow.camera.top = 40; sunLight.shadow.camera.bottom = -40;
+        sunLight.shadow.mapSize.set(2048, 2048);
+        scene.add(sunLight);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        window.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('#ui') || e.target.closest('#inspector')) return;
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(ground);
+            if (intersects.length > 0) {
+                selector.position.x = Math.round(intersects[0].point.x / 2) * 2;
+                selector.position.z = Math.round(intersects[0].point.z / 2) * 2;
+                updateAnalysis();
+            }
+        });
+
+        let lat = 34.05, lng = -118.24;
+        navigator.geolocation.getCurrentPosition(p => { lat = p.coords.latitude; lng = p.coords.longitude; updateSun(); autoHighlight(); });
+
+        function getSunAtDate(x, z, dayIndex) {
+            const d = new Date(new Date().getFullYear(), 0, 1);
+            d.setDate(d.getDate() + dayIndex);
+            let mins = 0;
+            for(let i=420; i<1140; i+=60) {
+                d.setHours(Math.floor(i/60), 0);
+                const pos = SunCalc.getPosition(d, lat, lng);
+                if(pos.altitude > 0.1) {
+                    let blocked = false;
+                    // Wall Shadow
+                    if (z > 14 && pos.altitude < 0.35) blocked = true;
+                    // Playground Shadow (Simplified logic: if sun is in West and spot is East of playground)
+                    if (x > -14 && x < -10 && z > -8 && z < 2 && pos.azimuth > 1.5) blocked = true;
+                    if (!blocked) mins += 60;
+                }
+            }
+            return mins/60;
+        }
+
+        function updateAnalysis() {
+            const summer = getSunAtDate(selector.position.x, selector.position.z, 172);
+            const winter = getSunAtDate(selector.position.x, selector.position.z, 355);
+            document.getElementById('result').innerHTML = `Summer: ${summer.toFixed(1)}h | Winter: ${winter.toFixed(1)}h`;
+        }
+
+        function autoHighlight() {
+            let sunSpots = []; let chillSpots = [];
+            for(let x=-22; x<=22; x+=8) {
+                for(let z=-14; z<=14; z+=8) {
+                    const summer = getSunAtDate(x, z, 172);
+                    const winter = getSunAtDate(x, z, 355);
+                    sunSpots.push({x, z, h: (summer + winter)/2});
+                    chillSpots.push({x, z, h: winter});
+                }
+            }
+            sunSpots.sort((a,b) => b.h - a.h);
+            chillSpots.sort((a,b) => a.h - b.h);
+            for(let i=0; i<3; i++) {
+                highlighters[i].position.set(sunSpots[i].x, 0.15, sunSpots[i].z);
+                highlighters[i].visible = true;
+                highlighters[i+3].position.set(chillSpots[i].x, 0.15, chillSpots[i].z);
+                highlighters[i+3].visible = true;
+            }
+        }
+
+        function toggleView() {
+            isBirdsEye = !isBirdsEye;
+            if(isBirdsEye) { camera.position.set(0, 55, 0); camera.lookAt(0,0,0); }
+            else { camera.position.set(0, 35, 35); camera.lookAt(0,0,0); }
+        }
+
+        function updateSun() {
+            const day = document.getElementById('daySlider').value;
+            const mins = document.getElementById('timeSlider').value;
+            const d = new Date(new Date().getFullYear(), 0, 1); d.setDate(d.getDate() + parseInt(day)); d.setHours(Math.floor(mins/60), mins%60);
+            const pos = SunCalc.getPosition(d, lat, lng);
+            const dist = 100;
+            sunLight.position.set(-dist*Math.sin(pos.azimuth)*Math.cos(pos.altitude), dist*Math.sin(pos.altitude), dist*Math.cos(pos.azimuth)*Math.cos(pos.altitude));
+            let hue = 0.66; if (pos.altitude > 0) hue = 0.66 - (Math.sin(pos.altitude) * 0.66);
+            groundMat.color.setHSL(hue, 0.7, 0.2);
+            document.getElementById('sun-info').innerText = `${d.toLocaleDateString()} @ ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`;
+            scene.background.setHex(pos.altitude > 0 ? 0x87ceeb : 0x050510);
+            sunLight.intensity = pos.altitude > 0 ? 1.2 : 0;
+        }
+
+        document.querySelectorAll('input').forEach(i => i.addEventListener('input', updateSun));
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+        animate(); toggleView(); toggleView();
+    </script>
+</body>
+</html>
